@@ -1,0 +1,52 @@
+SET syntax_version = "v2"
+USE GRAPH ldbc_snb
+DROP QUERY bi_10
+
+CREATE QUERY bi_10(STRING tagName, DATETIME minDate) FOR GRAPH ldbc_snb {
+  TYPEDEF TUPLE<INT personId, INT score, INT friendScore, INT totalScore> interest;
+  SumAccum<INT> @score;
+  SumAccum<INT> @friendScore;
+  SetAccum<VERTEX<Person>> @@personAll;
+  HeapAccum<interest>(100, totalScore DESC, personId ASC) @@interestTop;
+  
+  vTag = { Tag.* };
+  vTag = 
+    SELECT v
+    FROM vTag:v
+    WHERE v.name == tagName;
+  
+  vPerson1 =
+    SELECT t
+    FROM vTag:s-(<Has_Interest:e)-Person:t 
+    ACCUM
+      t.@score += 100,
+      @@personAll += t;
+
+  vPerson2 =
+    SELECT t2
+    FROM vTag:s
+        -((<Has_Tag|<Has_Tag):e1)-(Post|Comment):t1
+        -((Has_Creator>|Has_Creator>):e2)-Person:t2
+    WHERE t1.creation_date > minDate
+    ACCUM t2.@score += 1
+    POST-ACCUM @@personAll += t2;
+
+  vPerson = { @@personAll };
+  accScore =
+    SELECT s
+    FROM vPerson:s-((Knows):e)-Person:t
+    ACCUM s.@friendScore += t.@score
+    POST-ACCUM @@interestTop += interest(s.id, s.@score, s.@friendScore, (s.@score + s.@friendScore));
+
+  FOREACH it IN @@interestTop DO
+    PRINT it.personId, it.score, it.friendScore;
+  END;
+  
+  int throuput=@@interestTop.size();
+  PRINT throuput;
+  PRINT (accScore.size()+vPerson.size()+vPerson1.size()+vPerson2.size()+vTag.size());
+}
+
+// INSTALL QUERY bi_10
+INTERPRET QUERY bi_10("John_Rhys-Davies", "2012-01-22 00:00:00")
+//graph schema is on page 13 https://ldbc.github.io/ldbc_snb_docs/ldbc-snb-specification.pdf
