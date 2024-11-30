@@ -1,0 +1,57 @@
+
+  //graph schema is on page 13 https://ldbc.github.io/ldbc_snb_docs/ldbc-snb-specification.pdf
+//BI 18 query description is on page 76 https://ldbc.github.io/ldbc_snb_docs/ldbc-snb-specification.pdf
+SET syntax_version = "v2"
+USE GRAPH ldbc_snb
+DROP QUERY bi_18
+
+CREATE QUERY bi_18(DATETIME minDate, INT lengthThreshold, SET<STRING> languages) FOR GRAPH ldbc_snb { 
+  TYPEDEF TUPLE <INT messageCount, INT personCount> INFO;
+DATETIME start=now();
+  HeapAccum<INFO>(1, personCount DESC, messageCount DESC) @@result;
+  MapAccum<INT, INT> @@count;
+  SumAccum<INT> @messageCount;
+
+  INT numPersonNoMsg = 0;
+  
+  vPerson = { Person.* };
+  vMessage =
+    SELECT t
+    FROM vPerson:s-((<Has_Creator|<Has_Creator):e)-(Comment|Post):t
+    WHERE t.content != "" AND ((t.type == "Post" AND t.image_file == "") OR t.type == "Comment")
+      AND t.length < lengthThreshold 
+      AND t.creation_date > minDate;
+
+  vMessage =
+    SELECT s
+    FROM vMessage:s-((Reply_Of>|Reply_Of>)*0..)-Post:t
+    WHERE t.lang IN languages;
+
+  vCreator =
+    SELECT t
+    FROM vMessage:s-((Has_Creator>|Has_Creator>):e)-Person:t
+    ACCUM t.@messageCount += 1
+    POST-ACCUM @@count += (t.@messageCount -> 1);
+
+  numPersonNoMsg = vPerson.size() - vCreator.size();
+  IF numPersonNoMsg != 0 THEN
+    @@count += (0 -> numPersonNoMsg);
+  END;
+
+  @@result.resize(@@count.size());
+  FOREACH (messageCount, personCount) IN @@count DO
+    @@result += INFO(messageCount, personCount);
+  END;
+DATETIME end1=now();
+  FLOAT latency=datetime_diff(end1,start);
+  int throuput= @@result.size()/latency;
+  PRINT latency;
+  PRINT throuput;
+  PRINT @@result.size();
+  print (vCreator.size()+vMessage.size()+vPerson.size()+numPersonNoMsg.size();
+}
+
+// INSTALL QUERY bi_18
+// RUN QUERY bi_18("2011-08-15 00:00:00",97,["tk"])
+SET query_timeout = 180000
+INTERPRET QUERY bi_18("2011-08-15 00:00:00",97,["tk"])
