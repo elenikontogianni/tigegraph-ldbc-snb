@@ -1,0 +1,39 @@
+SET query_timeout = 180000
+INTERPRET QUERY bi_24("Single")
+
+//graph schema is on page 13 https://ldbc.github.io/ldbc_snb_docs/ldbc-snb-specification.pdf
+//BI 23 query description is on page 81 https://ldbc.github.io/ldbc_snb_docs/ldbc-snb-specification.pdf
+SET syntax_version = "v2"
+USE GRAPH ldbc_snb
+DROP QUERY bi_23
+
+CREATE QUERY bi_23(STRING countryName) FOR GRAPH ldbc_snb { 
+  TYPEDEF TUPLE <INT messageCount, STRING destinationName, INT mon> destInfo;
+DATETIME start=now();
+  HeapAccum<destInfo>(100, messageCount DESC, destinationName ASC, mon ASC) @@destTop;
+  GroupByAccum<INT mon, STRING destinationName, SumAccum<INT> messageCount> @@destMap;
+
+  vCountry = { Country.* };
+  accAll =
+    SELECT s
+    FROM vCountry:s
+        -(<Is_Part_Of.<Is_Located_In)-Person:t1
+        -((<Has_Creator|<Has_Creator):e2)-(Comment|Post):t2
+        -((Is_Located_In>|Is_Located_In>):e3)-Country:t3
+    WHERE s.name == countryName
+      AND t3.name != countryName
+    ACCUM @@destMap += (month(t2.creation_date), t3.name -> 1);
+
+  FOREACH c IN @@destMap DO
+    @@destTop += destInfo(c.messageCount, c.destinationName, c.mon);
+  END;
+DATETIME endt=now();
+  FLOAT latency=datetime_diff(endt,start);
+  int throuput =@@destMap.size()/(latency+1);
+  PRINT latency;
+  PRINT throuput;
+  PRINT @@destTop;
+  PRINT vCountry.size()+accAll.size();
+}
+SET query_timeout = 180000
+INTERPRET QUERY bi_23("Ethiopia")
