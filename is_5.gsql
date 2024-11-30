@@ -1,0 +1,33 @@
+SET syntax_version = "v2"
+USE GRAPH ldbc_snb
+DROP QUERY is_5
+
+CREATE QUERY is_5(STRING messageId) FOR GRAPH ldbc_snb {
+  SetAccum<STRING> @@seed;
+
+  @@seed += messageId;
+  vComments = to_vertex_set(@@seed, "Comment");
+
+  IF vComments.size() > 0 THEN
+    vPerson = 
+      SELECT t
+      FROM vComments:s-(Has_Creator>:e)-Person:t;
+  ELSE
+    vPost = to_vertex_set(@@seed, "Post");
+    vPerson = 
+      SELECT t
+      FROM vPost:s-(Has_Creator>:e)-Person:t;
+  END;
+
+  PRINT vPerson[
+      vPerson.id AS personId,
+      vPerson.first_name AS firstName,
+      vPerson.last_name AS lastName];
+  print vComments.size()+vPerson.size()+@@seed.size();
+    
+}
+
+// INSTALL QUERY is_5
+// RUN QUERY is_5(1236950581248)
+SET query_timeout = 180000
+INTERPRET QUERY is_5(1236950581248)
