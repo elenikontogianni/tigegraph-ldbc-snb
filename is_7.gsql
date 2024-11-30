@@ -1,0 +1,47 @@
+SET syntax_version = "v2"
+USE GRAPH ldbc_snb
+DROP QUERY is_7
+
+CREATE QUERY is_7(STRING messageId) FOR GRAPH ldbc_snb {
+  TYPEDEF TUPLE<INT commentId, STRING commentContent, DATETIME commentCreationDate, INT replyAuthorId, STRING replyAuthorFirstName, STRING replyAuthorLastName, BOOL replyAuthorKnowsOriginalMessageAuthor> reply;
+
+  SetAccum<STRING> @@seed;
+  OrAccum @knows;
+  SumAccum<INT> @replyAuthorId;
+  SumAccum<STRING> @replyAuthorFirstName, @replyAuthorLastName;
+  HeapAccum<reply>(100, commentCreationDate DESC, replyAuthorId ASC) @@replyTop;
+
+  @@seed += messageId;
+  vMessage = to_vertex_set(@@seed, "Comment");
+  IF vMessage.size() == 0 THEN
+    vMessage = to_vertex_set(@@seed, "Post");
+  END;
+
+  accFriend = 
+    SELECT s
+    FROM vMessage:s
+        -((Has_Creator>|Has_Creator>):e1)-Person:t1
+        -((Knows):e2)-Person:t2
+    ACCUM t2.@knows += True;
+  
+  accReply = 
+    SELECT s
+    FROM vMessage:s
+        -((<Reply_Of|<Reply_Of):e1)-Comment:t1
+        -(Has_Creator>:e2)-Person:t2
+    ACCUM
+      t1.@replyAuthorId = t2.id,
+      t1.@replyAuthorFirstName = t2.first_name,
+      t1.@replyAuthorLastName = t2.last_name,
+      CASE WHEN t2.@knows THEN t1.@knows += True END
+    POST-ACCUM @@replyTop += reply(t1.id, t1.content, t1.creation_date, t1.@replyAuthorId, t1.@replyAuthorFirstName, t1.@replyAuthorLastName, t1.@knows);
+
+  PRINT @@replyTop;
+  
+  print accFriend.size()+accReply.size()+vMessage.size()+@@replyTop.size();
+}
+
+// INSTALL QUERY is_7
+// RUN QUERY is_7(1236950581248)
+SET query_timeout = 180000
+INTERPRET QUERY is_7(1236950581248)
