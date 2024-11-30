@@ -1,0 +1,50 @@
+USE GRAPH ldbc_snb
+DROP QUERY bi_15
+
+CREATE QUERY bi_15(STRING countryName) FOR GRAPH ldbc_snb {
+  TYPEDEF TUPLE<INT personId, INT count_> socialNormalPerson;
+DATETIME srart=now();
+  OrAccum @isLocatedInCountry;
+  SumAccum<INT> @@numFriendsAll;
+  SumAccum<INT> @numFriends;
+  HeapAccum<socialNormalPerson>(100, personId ASC) @@socialNormalPersonTop;
+
+  INT socialNormal = 0;
+
+  vCountry = { Country.* };
+  vPersonInCountry = 
+    SELECT t
+    FROM vCountry:s-(<Is_Part_Of.<Is_Located_In)-Person:t
+    WHERE s.name == countryName
+    ACCUM t.@isLocatedInCountry += True;
+
+  // phase 1. calculate social normal, i.e. floor(avg(#friends))
+  accSocialNormal =
+    SELECT s
+    FROM vPersonInCountry:s-((Knows):e)-Person:t
+    ACCUM CASE WHEN t.@isLocatedInCountry THEN @@numFriendsAll += 1 END;
+
+  socialNormal = @@numFriendsAll / (vPersonInCountry.size()+1);
+print socialNormal;
+  
+  // phase 2. find persons in Country, whose # friends in Country == socialNormal
+  vPersonInCountry =
+    SELECT s
+    FROM vPersonInCountry:s-((Knows):e)-Person:t
+    ACCUM CASE WHEN t.@isLocatedInCountry THEN s.@numFriends += 1 END
+    POST-ACCUM 
+      CASE 
+        WHEN s.@numFriends == socialNormal THEN 
+          @@socialNormalPersonTop += socialNormalPerson(s.id, s.@numFriends) 
+      END;
+DATETIME end1=now();
+  FLOAT latency=datetime_diff(end1,srart);
+  int throuput=@@socialNormalPersonTop.size()/(latency+1);
+  PRINT latency;
+  print throuput;
+  PRINT @@socialNormalPersonTop.size();
+  print accSocialNormal.size()+accSocialNormal.size()+vPersonInCountry.size()+vCountry.size();
+}
+SET query_timeout = 180000
+INTERPRET QUERY bi_15("Burma")
+
