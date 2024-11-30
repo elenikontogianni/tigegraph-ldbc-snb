@@ -1,0 +1,44 @@
+SET syntax_version = "v2"
+USE GRAPH ldbc_snb
+DROP QUERY bi_8
+
+CREATE QUERY bi_8(STRING tagName) FOR GRAPH ldbc_snb {
+  TYPEDEF TUPLE<STRING relatedTagName, INT replyCount> topic;
+DATETIME start=now();
+  AndAccum @isValid;
+  SumAccum<INT> @count;
+  SetAccum<VERTEX<Comment>> @@replyValid;
+  HeapAccum<topic>(100, replyCount DESC, relatedTagName ASC) @@topicTop;
+	
+  vTag = { Tag.* };
+  findValidReply =
+    SELECT s
+    FROM vTag:s
+        -((<Has_Tag|<Has_Tag):e1)-(Comment|Post):t1
+        -((<Reply_Of|<Reply_Of):e2)-Comment:t2
+        -(Has_Tag>:e)-Tag:t3
+    WHERE s.name == tagName
+    ACCUM CASE WHEN t3.name == tagName THEN t2.@isValid += False END
+    POST-ACCUM CASE WHEN t2.@isValid THEN @@replyValid += t2 END;
+
+  vReply = { @@replyValid };
+  accTopic =
+    SELECT s
+    FROM vReply:s-(Has_Tag>:e)-Tag:t
+    WHERE t.name != tagName
+    ACCUM t.@count += 1 # no duplicated names for tags
+    POST-ACCUM @@topicTop += topic(t.name, t.@count);
+
+  PRINT @@topicTop;
+  DATETIME end1=now();
+  FLOAT latency=datetime_diff(end1,start);
+  PRINT latency;
+  int throuput=@@topicTop.size();
+  PRINT throuput;
+  PRINT (accTopic.size()+vReply.size()+findValidReply.size()+vTag.size()+@@topicTop.size());
+}
+
+// INSTALL QUERY bi_8
+// RUN QUERY bi_8("Genghis_Khan")
+SET query_timeout = 180000
+INTERPRET QUERY bi_8("Genghis_Khan")
