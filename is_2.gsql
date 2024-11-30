@@ -1,0 +1,54 @@
+
+set syntax_version = "v2"
+use graph ldbc_snb
+DROP QUERY is_2
+
+CREATE QUERY is_2(VERTEX<Person> personId) FOR GRAPH ldbc_snb {
+  TYPEDEF TUPLE<INT messageId, STRING messageContent, DATETIME messageCreationDate, INT originalPostId, INT originalPostAuthorId, STRING originalPostAuthorFirstName, STRING originalPostAuthorLastName> ogPostInfo;
+
+  SumAccum<INT> @messageId, @messageCreationDate, @authorOgId;
+  SumAccum<STRING> @messageContent, @authorOgFN, @authorOgLN;
+  HeapAccum<ogPostInfo>(10, messageCreationDate DESC, messageId DESC) @@ogPostInfoTop;
+
+  vPerson = { personId };
+  vMessage = 
+    SELECT t
+    FROM vPerson:s-((<Has_Creator|<Has_Creator):e)-(Comment|Post):t
+    ORDER BY t.creation_date DESC, t.id DESC
+    LIMIT 10;
+
+  accMessage = 
+    SELECT s
+    FROM vMessage:s
+        -((Reply_Of>|Reply_Of>)*0..)-Post:t1
+        -(Has_Creator>:e2)-Person:t2
+    ACCUM 
+      CASE
+        WHEN s.type == "Comment" THEN
+          t1.@messageId = s.id,
+          t1.@messageCreationDate = datetime_to_epoch(s.creation_date),
+          t1.@messageContent = s.content
+        ELSE
+          t1.@messageId = t1.id,
+          t1.@messageCreationDate = datetime_to_epoch(t1.creation_date),
+          IF s.content != "" THEN
+            t1.@messageContent = t1.content
+          ELSE
+            t1.@messageContent = t1.image_file
+          END
+      END,
+      t1.@authorOgId = t2.id,
+      t1.@authorOgFN = t2.first_name,
+      t1.@authorOgLN = t2.last_name
+    POST-ACCUM @@ogPostInfoTop += 
+        ogPostInfo(t1.@messageId, t1.@messageContent, epoch_to_datetime(t1.@messageCreationDate), 
+            t1.id, t1.@authorOgId, t1.@authorOgFN, t1.@authorOgLN);
+
+  PRINT @@ogPostInfoTop.size();
+  PRINT (accMessage.size()+vMessage.size()+vPerson.size()) as  total ;
+
+}
+
+//INSTALL QUERY is_2
+//RUN QUERY is_2(307863255836
+INTERPRET QUERY is_2(30786325583618)
