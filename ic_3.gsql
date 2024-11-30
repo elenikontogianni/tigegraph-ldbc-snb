@@ -1,0 +1,61 @@
+SET syntax_version = "v2"
+USE GRAPH ldbc_snb
+DROP QUERY ic_3
+
+CREATE or replace QUERY ic_3(VERTEX<Person> personId, STRING countryXName, STRING countryYName, DATETIME startDate, INT durationDays) FOR GRAPH ldbc_snb {
+  TYPEDEF TUPLE<INT personId, STRING personFirstName, STRING personLastName, INT xCount, INT yCount, INT xyCount> msgStats; 
+DATETIME startDate1=now();
+  SetAccum<VERTEX<Person>> @@friendAll;
+  SetAccum<INT> @@cityIds;
+  GroupByAccum<INT personId, STRING personFirstName, STRING personLastName, SumAccum<INT> xCount, SumAccum<INT> yCount> @@msgStatsGroup;
+  HeapAccum<msgStats>(20, xCount DESC, personId ASC) @@msgStatsTop;
+
+  DATETIME endDate;
+  endDate = datetime_add(startDate, INTERVAL durationDays DAY);
+
+  vCountry = { Country.* };
+  vCountry =
+    SELECT s
+    FROM vCountry:s-(<Is_Part_Of:e)-City:t
+    ACCUM CASE WHEN s.name == countryXName OR s.name == countryYName THEN @@cityIds += t.id END;
+
+  vPerson = { personId };
+  accFriend =
+    SELECT s
+    FROM vPerson:s
+        -((Knows)*1..2)-Person:t1
+        -(Is_Located_In>:e2)-City:t2
+    WHERE s != t1
+      AND NOT @@cityIds.contains(t2.id)
+    ACCUM @@friendAll += t1;
+
+  vFriend = { @@friendAll };
+  accFriendMessage = 
+    SELECT s
+    FROM vFriend:s
+        -((<Has_Creator|<Has_Creator):e1)-(Comment|Post):t1
+        -((Is_Located_In>|Is_Located_In>):e2)-Country:t2
+    WHERE startDate <= t1.creation_date AND t1.creation_date < endDate
+    ACCUM
+      CASE
+        WHEN t2.name == countryXName THEN
+          @@msgStatsGroup += (s.id, s.first_name, s.last_name -> 1, 0)
+        WHEN t2.name == countryYName THEN
+          @@msgStatsGroup += (s.id, s.first_name, s.last_name -> 0, 1)
+      END;
+
+  FOREACH (id,fn,ln,x,y) IN @@msgStatsGroup DO
+    @@msgStatsTop += msgStats(id, fn, ln, x, y, (x + y));
+  END;
+PRINT endDate;
+  DATETIME  endtime=now();
+  
+  FLOAT latency=datetime_diff(endtime,startDate1);
+  int throuput=@@msgStatsTop.size()/latency;
+  print latency;
+  PRINT throuput;
+  PRINT @@msgStatsTop.size();
+  print (@@msgStatsTop.size()+vCountry.size()+vFriend.size()+vPerson.size());
+}
+SET query_timeout = 180000
+INTERPRET QUERY ic_3(17592186055119, "Laos", "Scotland", "2011-05-31T17:00:00", 42)
