@@ -1,0 +1,63 @@
+SET syntax_version = "v2"
+USE GRAPH ldbc_snb
+DROP QUERY bi_21
+
+CREATE QUERY bi_21(STRING countryName, DATETIME endDate) FOR GRAPH ldbc_snb {
+  TYPEDEF TUPLE<INT zombieId, INT zombieLikeCount, INT totalLikeCount, DOUBLE zombieScore> zombie;
+DATETIME start=now();
+	SumAccum<INT> @messageCount, @likeCount, @zombieLikeCount;
+  OrAccum @isZombie;
+  HeapAccum<zombie>(100, zombieScore DESC, zombieId ASC) @@zombieTop;
+	
+	vCountry = { Country.* };
+  vPerson =
+    SELECT t
+    FROM vCountry:s-(<Is_Part_Of.<Is_Located_In)-Person:t
+    WHERE s.name == countryName
+      AND t.creation_date < endDate;
+	  
+	accPersonMsg =
+    SELECT s
+    FROM vPerson:s-((<Has_Creator|<Has_Creator):e)-(Comment|Post):t
+    WHERE t.creation_date < endDate
+    ACCUM s.@messageCount += 1;
+  
+  vZombie =
+    SELECT v
+    FROM vPerson:v
+    WHERE v.@messageCount < (year(endDate) - year(v.creation_date)) * 12 + (month(endDate) - month(v.creation_date)) + 1
+    ACCUM v.@isZombie += True;
+
+	accLikeCount = 
+	  SELECT s
+	  FROM vZombie:s
+        -((<Has_Creator|<Has_Creator):e1)-(Post|Comment):t1
+        -((<Likes):e2)-Person:t2
+    WHERE t2.creation_date < endDate
+    ACCUM
+      s.@likeCount += 1,
+      CASE WHEN t1.@isZombie THEN s.@zombieLikeCount += 1 END;
+
+  vZombie =
+    SELECT v
+    FROM vZombie:v
+    ACCUM 
+      CASE
+        WHEN v.@likeCount > 0 THEN // avoid division by zero
+          @@zombieTop += zombie(v.id, v.@zombieLikeCount, v.@likeCount, v.@zombieLikeCount/(v.@likeCount*1.0))
+        ELSE
+          @@zombieTop += zombie(v.id, 0, 0, 0)
+      END;
+DATETIME end1=now();
+  FLOAT latency=datetime_diff(end1,start);
+  INT throuput=@@zombieTop.size()/(latency+1);
+  PRINT latency;
+  PRINT throuput;
+	PRINT @@zombieTop;
+  PRINT vZombie.size()+vCountry.size()+vPerson.size()+accPersonMsg.size();
+  }
+
+// INSTALL QUERY bi_21
+// RUN QUERY bi_21("Ethiopia","2013-01-01 00:00:00")
+SET query_timeout = 180000
+INTERPRET QUERY bi_21("Ethiopia","2013-01-01 00:00:00")
