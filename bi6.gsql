@@ -1,0 +1,64 @@
+CREATE OR REPLACE QUERY bi6(STRING tag) FOR GRAPH ldbc_snb {
+  TYPEDEF TUPLE <UINT personId, UINT authorityScore> RESULT;
+
+  // Result accumulation - top 100 by authorityScore, tie-breaking by personId
+  HeapAccum<RESULT>(100, authorityScore DESC, personId ASC) @@result;
+
+  // Accumulators
+  SumAccum<UINT> @totalScore;       // To accumulate total score for each person
+  SumAccum<INT> @@totalVertices; // To count total vertices processed
+  SumAccum<INT> @@totalPaths;   // To count total paths processed
+
+  MapAccum<VERTEX<Person>, SumAccum<UINT>> @pScore; // Map to store scores per person
+
+  // Time tracking for latency
+  DATETIME startTime = NOW(), endTime;
+
+  // Step 1: Select the tag entity
+  T = {Tag.*};
+  T = SELECT t FROM T:t WHERE t.name == tag;
+
+  // Step 2: Messages that have the tag
+  message1 = SELECT m FROM T:t -(<Has_Tag)- (Comment|Post):m;
+  @@totalPaths += message1.size();  // Accumulate number of messages
+
+  // Step 3: Likes to messages (persons who liked the message)
+  person2 = SELECT p2 FROM message1:m -(<Likes)- Person:p2;
+  @@totalVertices += person2.size(); // Accumulate number of persons
+
+  // Step 4: Messages created by persons who liked other messages
+  message2 = SELECT m FROM person2:p2 -(<Has_Creator)- (Comment|Post):m;
+  @@totalPaths += message2.size();  // Accumulate more paths
+
+  // Step 5: Accumulate score for each message based on likes
+  message2 = SELECT m FROM message2:m -(<Likes)- Person
+    ACCUM m.@totalScore += 1;  // Increment score for each message based on likes
+
+  // Step 6: Accumulate score for creators of the messages
+
+
+  // Step 7: Prepare temporary score accumulation for liked messages
+  tmp = SELECT m  
+    FROM message1:m -(<Likes)- Person:p2 
+    ACCUM m.@pScore += (p2 -> p2.@totalScore);  // Accumulate person score in the message
+
+  // Step 8: Calculate authority score for original message creators
+   // Add person and their total score to the result
+
+  // Step 9: End time for latency calculation
+  endTime = NOW();
+
+  // Step 10: Calculate latency (in seconds)
+  FLOAT latency = datetime_diff(endTime, startTime);
+
+  // Step 11: Calculate throughput (vertices per second)
+  FLOAT throughput = @@totalVertices +message1.size()+message2.size()+@@totalPaths+ @@result.size()+T.size();
+
+  // Step 12: Print the results
+  PRINT "Total Processed Vertices: ", @@result.size();
+  PRINT "Total Paths Processed: ", throughput;
+
+}
+USE GRAPH ldbc_snb
+SET syntax_version = "v2"
+INTERPRET QUERY bi6("Abbas_I_of_Persia")
