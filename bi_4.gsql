@@ -1,0 +1,39 @@
+USE GRAPH ldbc_snb
+DROP QUERY bi_4
+
+CREATE QUERY bi_4(STRING tagClassName, STRING countryName) FOR GRAPH ldbc_snb { 
+  TYPEDEF TUPLE <INT forumId, STRING forumTitle, DATETIME forumCreationDate, INT personId, INT postCount> forumInfo;
+ 
+  SumAccum<INT> @personId;
+  SetAccum<INT> @postIds;
+  HeapAccum<forumInfo>(20, postCount DESC, forumId ASC) @@forumInfoTop;
+
+  vCountry = { Country.* };
+  vForum =
+    SELECT t2
+    FROM vCountry:s
+        -(<Is_Part_Of.<Is_Located_In)-Person:t1
+        -(<Has_Moderator)-Forum:t2
+    WHERE s.name == countryName
+    ACCUM t2.@personId = t1.id;
+   vTagClass = { Tag_Class.* };
+  accPostForum =
+    SELECT s
+    FROM vTagClass:s-(<Has_Type.<Has_Tag)-Post:t1
+        -(<Container_Of:e2)-Forum:t2
+    WHERE s.name == tagClassName
+      AND t2.@personId != 0 // default value is 0
+    ACCUM t2.@postIds += t1.id
+    POST-ACCUM @@forumInfoTop += forumInfo(t2.id, t2.title, t2.creation_date, t2.@personId, t2.@postIds.size());
+
+  PRINT accPostForum.size()+@@forumInfoTop.size()+vCountry.size()+vForum.size()+vTagClass.size();
+
+  PRINT @@forumInfoTop.size();
+}
+// RUN QUERY bi_4("MusicalArtist","Burma")
+SET query_timeout = 180000
+INTERPRET QUERY bi_4("MusicalArtist","Burma")
+SET syntax_version = "v2"
+//graph schema is on page 13 https://ldbc.github.io/ldbc_snb_docs/ldbc-snb-specification.pdf
+//BI 2 query description is on page 60 https://ldbc.github.io/ldbc_snb_docs/ldbc-snb-specification.pdf
+SET syntax_version = "v2"
