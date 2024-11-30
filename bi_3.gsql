@@ -1,0 +1,45 @@
+
+SET syntax_version = "v2"
+USE GRAPH ldbc_snb
+DROP QUERY bi_3
+
+CREATE QUERY bi_3(INT year1, INT month1) FOR GRAPH ldbc_snb { 
+  TYPEDEF TUPLE <STRING tagName, INT countMonth1, INT countMonth2, INT diff> TAG_COUNT;
+
+  GroupByAccum<STRING tagName, SumAccum<INT> countMonth1, SumAccum<INT> countMonth2> @@count;
+  HeapAccum<TAG_COUNT>(100, diff DESC, tagName ASC) @@result;
+
+  INT year2, month2;
+  year2 = year1 + (month1 / 12);
+  month2 = 1 + month1 % 12;
+
+  vMessages = { Post.*, Comment.* };
+  vMessages = 
+    SELECT s
+    FROM vMessages:s
+    WHERE (year(s.creation_date) == year1 AND month(s.creation_date) == month1)
+        OR (year(s.creation_date) == year2 AND month(s.creation_date) == month2);
+
+  vMessages = 
+    SELECT s
+    FROM vMessages:s-(_>:e)-Tag:t
+    ACCUM 
+      IF year(s.creation_date) == year1 AND month(s.creation_date) == month1 THEN 
+        @@count += (t.name -> 1, 0)
+      ELSE
+        @@count += (t.name -> 0, 1)
+      END;
+
+  FOREACH c IN @@count DO
+    @@result += TAG_COUNT(c.tagName, c.countMonth1, c.countMonth2, abs(c.countMonth1 - c.countMonth2));
+  END;
+
+  PRINT @@result.size();
+  PRINT vMessages.size()+@@result.size();
+}
+
+// INSTALL QUERY bi_3
+// RUN QUERY bi_3(2010,10)
+SET query_timeout = 180000
+INTERPRET QUERY bi_3(2010,10)
+
