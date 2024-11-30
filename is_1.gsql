@@ -1,0 +1,21 @@
+SET syntax_version = "v2"
+USE GRAPH ldbc_snb
+DROP QUERY is_1
+
+CREATE QUERY is_1(VERTEX<Person> personId) FOR GRAPH ldbc_snb {
+  SumAccum<INT> @cityId;
+
+  vPerson = { personId };
+  PRINT vPerson.size() as total;
+  vPerson1 = 
+    SELECT s
+    FROM vPerson:s-(Is_Located_In>:e)-City:t
+    ACCUM s.@cityId = t.id;
+
+  PRINT (vPerson.size()+vPerson1.size()) as success;
+}
+
+// INSTALL QUERY is_1
+// RUN QUERY is_1(30786325583618)
+
+INTERPRET QUERY is_1(30786325583618)
