@@ -1,0 +1,52 @@
+SET syntax_version = "v2"
+USE GRAPH ldbc_snb
+DROP QUERY bi_5
+
+CREATE QUERY bi_5(STRING countryName) FOR GRAPH ldbc_snb {
+  TYPEDEF TUPLE<INT id, STRING firstName, STRING lastName, DATETIME creationDate, INT postCount> poster;
+
+  SumAccum<INT> @count;
+  OrAccum @visited;
+  HeapAccum<poster>(100, postCount DESC, id ASC) @@posterTop;
+
+  vCountry = { Country.* };
+  vForum =
+    SELECT t2
+    FROM vCountry:s
+        -(<Is_Part_Of.<Is_Located_In)-Person:t1
+        -(<Has_Member:e2)-Forum:t2
+    WHERE s.name == countryName
+    ACCUM t2.@count += 1
+    ORDER BY t2.@count DESC, t2.id ASC
+    LIMIT 100;
+  
+  vPerson =
+    SELECT t
+    FROM vForum:s-(Has_Member>:e)-Person:t
+    ACCUM s.@visited += True;
+
+  vPersonHasPost =
+    SELECT s
+    FROM vPerson:s
+        -(<Has_Creator:e1)-Post:t1
+        -(<Container_Of:e2)-Forum:t2
+    WHERE t2.@visited
+    ACCUM s.@count += 1
+    POST-ACCUM @@posterTop += poster(s.id, s.first_name, s.last_name, s.creation_date, s.@count);
+
+  vPersonNoPost = vPerson MINUS vPersonHasPost;
+  accPersonNoPost =
+    SELECT v
+    FROM vPersonNoPost:v
+    ACCUM @@posterTop += poster(v.id, v.first_name, v.last_name, v.creation_date, v.@count);
+
+  INT throuput=@@posterTop.size();
+  PRINT throuput;
+  PRINT @@posterTop.size();
+  PRINT accPersonNoPost.size()+vPersonNoPost.size()+vPerson.size()+vForum.size()+vCountry.size()+vPersonHasPost.size()+@@posterTop.size();
+}
+
+// INSTALL QUERY bi_5
+// RUN QUERY bi_5("Belarus")
+SET query_timeout = 180000
+INTERPRET QUERY bi_5("Belarus")
