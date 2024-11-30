@@ -1,0 +1,33 @@
+SET syntax_version = "v2"
+USE GRAPH ldbc_snb
+DROP QUERY bi_14
+
+CREATE QUERY bi_14(DATETIME startDate, DATETIME endDate) FOR GRAPH ldbc_snb {
+  TYPEDEF TUPLE<INT personId, STRING personFirstName, STRING personLastName, INT threadCount, INT messageCount> initiator;
+ DATETIME startDate1=now();
+  SumAccum<INT> @messageCount;
+  SetAccum<INT> @threadIds;
+  HeapAccum<initiator>(100, messageCount DESC, personId ASC) @@initiatorTop;
+
+  vMessage = {  Post.* };
+  accMsgPostPerson =
+    SELECT s
+    FROM vMessage:s
+        -((Reply_Of>|Reply_Of>)*0..)-Post:t1
+        -(Has_Creator>:e2)-Person:t2
+    WHERE s.creation_date >= startDate AND s.creation_date <= endDate
+      AND t1.creation_date >= startDate AND t1.creation_date <= endDate
+    ACCUM t2.@messageCount += 1, t2.@threadIds += t1.id
+    POST-ACCUM @@initiatorTop += initiator(t2.id, t2.first_name, t2.last_name, t2.@threadIds.size(), t2.@messageCount);
+DATETIME endDate1=now();
+  FLOAT latency=datetime_diff(endDate1,startDate1);
+  INT throuput=@@initiatorTop.size()/latency;
+  PRINT latency;
+  PRINT throuput;
+  PRINT @@initiatorTop.size();
+  print (vMessage.size()+accMsgPostPerson.size());
+}
+INTERPRET QUERY bi_14("2012-05-31 22:00:00", "2012-06-30 22:00:00")
+SET query_timeout = 180000
+
+
