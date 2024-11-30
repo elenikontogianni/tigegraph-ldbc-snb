@@ -1,0 +1,40 @@
+USE GRAPH ldbc_snb
+DROP QUERY bi_12
+
+CREATE QUERY bi_12(DATETIME minDate, INT likeThreshold) FOR GRAPH ldbc_snb { 
+  TYPEDEF TUPLE<INT messageId, DATETIME messageCreationDate, STRING creatorFirstName, STRING creatorLastName, INT likeCount> msg;
+DATETIME start=now();
+  SumAccum<STRING> @creatorFirstName, @creatorLastName;
+  SumAccum<INT> @likeCount;
+  HeapAccum<msg>(100, likeCount DESC, messageId ASC) @@trendingMsg;
+
+  vMessage = { Comment.*, Post.* };
+  vMessage = 
+    SELECT s
+    FROM vMessage:s-((Has_Creator>|Has_Creator>|<Likes|<Likes):e)-Person:t
+    WHERE s.creation_date > minDate
+    ACCUM 
+      CASE
+        WHEN (e.type == "Has_Creator" ) THEN
+          s.@creatorFirstName = t.first_name,
+          s.@creatorLastName = t.last_name
+        WHEN (e.type == "Likes" ) THEN
+          s.@likeCount += 1
+      END
+    POST-ACCUM
+      IF s.@likeCount > likeThreshold THEN
+        @@trendingMsg += msg(s.id, s.creation_date, s.@creatorFirstName, s.@creatorLastName, s.@likeCount)
+      END;
+DATETIME end1=now();
+  FLOAT latency=datetime_diff(end1,start);
+  int throuput=@@trendingMsg.size();
+  PRINT throuput;
+  PRINT latency;
+  PRINT @@trendingMsg;
+  PRINT (vMessage.size()+vMessage.size());
+}
+
+// INSTALL QUERY bi_12
+// RUN QUERY bi_12("2011-07-21 22:00:00", 400)
+SET query_timeout = 180000
+INTERPRET QUERY bi_12("2011-07-21 22:00:00", 400)
