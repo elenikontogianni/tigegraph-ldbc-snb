@@ -1,0 +1,71 @@
+SET syntax_version = "v2"
+USE GRAPH ldbc_snb
+DROP QUERY ic_1
+
+CREATE QUERY ic_1(VERTEX<Person> personId, STRING firstName) FOR GRAPH ldbc_snb {
+  TYPEDEF TUPLE<VERTEX<Person> v, INT distanceFromPerson, STRING lastName, INT id> friendInfo;
+  TYPEDEF TUPLE<STRING orgName,  STRING orgPlace> org; 
+DATETIME start=now();
+  HeapAccum<friendInfo>(20, distanceFromPerson ASC, lastName ASC, id ASC) @@friendInfoTop;
+  SetAccum<VERTEX<Person>> @@friendAll;
+  SetAccum<org> @comp, @univ;
+  SumAccum<STRING> @cityName;
+  SumAccum<INT> @distance, @orgYear;
+  MapAccum<INT, STRING> @@cityInfo;
+  MapAccum<INT, SetAccum<org>> @@compInfo, @@univInfo;
+  OrAccum @visited = False;
+
+  INT i = 0;
+
+  vPerson = { personId };
+
+  WHILE i < 3 DO
+    vPerson = 
+      SELECT t
+      FROM vPerson:s-((Knows):e)-Person:t
+      WHERE t.@visited == False
+      ACCUM 
+        s.@visited += True,
+        t.@visited += True,
+        t.@distance += (i+1)
+      POST-ACCUM
+        CASE WHEN t.first_name == firstName THEN 
+          @@friendInfoTop += friendInfo(t, t.@distance, t.last_name, t.id)
+        END;
+
+    IF @@friendInfoTop.size() >= 20 THEN BREAK; END;
+    i = i + 1;
+  END;
+
+  FOREACH f IN @@friendInfoTop DO
+    @@friendAll += f.v;
+  END;
+
+  vFriend = { @@friendAll };
+  
+
+  vFriend =
+    SELECT s
+    FROM vFriend:s
+        -((Work_At>|Study_At>):e1)-(Company|University):t1
+        -((Is_Located_In>|Is_Located_In>):e2)-(Country|City):t2
+    ACCUM
+      CASE
+        WHEN t1.type == "Company" THEN
+          @@compInfo += (s.id -> org(t1.name, t2.name))
+        WHEN t1.type == "University" THEN
+          @@univInfo += (s.id -> org(t1.name,  t2.name))
+      END
+    POST-ACCUM 
+      s.@cityName += @@cityInfo.get(s.id),
+      s.@univ += @@univInfo.get(s.id),
+      s.@comp += @@compInfo.get(s.id)
+    ORDER BY s.@distance ASC, s.last_name ASC, s.id ASC;
+  DATETIME endt=now();
+int totalQueryTime=datetime_diff(endt,start);
+  PRINT  totalQueryTime AS totalQueryTime;
+  PRINT  ( vFriend.size()/ (totalQueryTime+1 ));
+  PRINT vFriend.size()+vPerson.size()+@@friendAll.size()+@@friendInfoTop.size();
+}
+SET query_timeout = 180000
+INTERPRET QUERY ic_1(30786325583618,"Carmen")
