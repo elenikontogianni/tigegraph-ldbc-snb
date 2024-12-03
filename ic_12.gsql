@@ -1,0 +1,43 @@
+SET syntax_version = "v2"
+USE GRAPH ldbc_snb
+DROP QUERY ic_12
+
+CREATE QUERY ic_12(VERTEX<Person> personId, STRING tagClassName) FOR GRAPH ldbc_snb {
+  OrAccum @visited;
+  SetAccum<STRING> @tagNames;
+  SumAccum<INT> @replyCount;
+
+DATETIME start=now();
+  vPerson = { personId };
+  vFriend =
+    SELECT t
+    FROM vPerson:s-((Knows):e)-Person:t;
+
+  vFriend =
+    SELECT s
+    FROM vFriend:s-(<Has_Creator|Reply_Of>)-Post:t
+    WHERE t.@visited
+    ACCUM s.@tagNames += t.@tagNames, s.@replyCount += 1
+    ORDER BY s.@replyCount DESC, s.id ASC
+    LIMIT 20;
+
+  PRINT vFriend[
+      vFriend.id AS personId,
+      vFriend.first_name AS personFirstName,
+      vFriend.last_name AS personLastName,
+      vFriend.@tagNames AS tagNames,
+      vFriend.@replyCount AS replyCount];
+ DATETIME end1=now();
+  float latency=datetime_diff(end1,start);
+  int throuput=vPerson.size()/(latency+1);
+  print vFriend.size();
+  PRINT vFriend.size()+vPerson.size();
+  print  throuput;
+  PRINT latency;
+  
+}
+
+
+INTERPRET QUERY ic_12(17592186052613, "BasketballPlayer")
+  //graph schema is on page 13 https://ldbc.github.io/ldbc_snb_docs/ldbc-snb-specification.pdf
+//IC 13 query description is on page 44 https://ldbc.github.io/ldbc_snb_docs/ldbc-snb-specification.pdf
