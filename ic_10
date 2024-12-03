@@ -1,0 +1,72 @@
+SET syntax_version = "v2"
+USE GRAPH ldbc_snb
+DROP QUERY ic_10
+
+CREATE QUERY ic_10(VERTEX<Person> personId, INT month, INT nextMonth) FOR GRAPH ldbc_snb {
+  TYPEDEF TUPLE<INT personId, STRING personFirstName, STRING personLastName, INT commonInterestScore, STRING personGender, STRING personCityName> friendInfo;
+DATETIME start=now();
+  SetAccum<VERTEX<Person>> @@friendAll;
+  SetAccum<VERTEX<Post>> @@postAll;
+  SumAccum<STRING> @city;
+  SetAccum<VERTEX<Tag>> @@tagInterest;
+	OrAccum @hasCommonInterest;
+  SumAccum<INT> @commonInterestScore;
+  HeapAccum<friendInfo>(10, commonInterestScore DESC, personId ASC) @@friendInfoTop;
+
+  vPerson = { personId };
+  vTag = 
+    SELECT t
+    FROM vPerson:s-(Has_Interest>:e)-Tag:t
+    POST-ACCUM @@tagInterest += t;
+
+  accFriend = 
+    SELECT s
+    FROM vPerson:s
+        -((Knows):e1)-Person:t1
+        -((Knows):e2)-Person:t2
+        -(Is_Located_In>:e3)-City:t3
+    WHERE s != t2
+      AND ((month(t2.birthday) == month AND day(t2.birthday) >= 21)
+          OR (month(t2.birthday) == nextMonth AND day(t2.birthday) < 22))
+    ACCUM t2.@city = t3.name
+    POST-ACCUM @@friendAll += t2;
+
+  vFriend = { @@friendAll };
+  vPost = 
+    SELECT t
+    FROM vFriend:s-(<Has_Creator:e)-Post:t;
+
+  accPostTag =
+    SELECT s
+    FROM vPost:s-(Has_Tag>:e)-Tag:t
+    ACCUM CASE WHEN @@tagInterest.contains(t) THEN s.@hasCommonInterest += True END;
+
+	accPostPerson = 
+	  SELECT t
+	  FROM vPost:s-(Has_Creator>:e)-Person:t
+	  ACCUM
+	    CASE
+	      WHEN NOT s.@hasCommonInterest THEN
+	        t.@commonInterestScore += (-1)
+	      ELSE
+	        t.@commonInterestScore += 1
+	    END;
+
+	accFriend = 
+    SELECT v
+    FROM vFriend:v
+    ACCUM @@friendInfoTop += friendInfo(v.id, v.first_name, v.last_name, v.@commonInterestScore, v.gender, v.@city);
+  DATETIME endt=now();
+PRINT start;
+  FLOAT  latency=datetime_diff(endt,start);
+  int throuput=@@friendInfoTop.size()/(latency+1);
+  PRINT latency;
+  PRINT throuput;
+  PRINT @@friendInfoTop.size();
+  PRINT accFriend.size()+accPostPerson.size()+accPostTag.size()+vFriend.size()+vPerson.size()+vPost.size()+vTag.size();
+}
+
+//INSTALL QUERY ic_10
+//RUN QUERY ic_10(30786325583618, 11, 12)
+SET query_timeout = 180000
+INTERPRET QUERY ic_10(30786325583618, 11, 12)
