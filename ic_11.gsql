@@ -1,0 +1,56 @@
+SET syntax_version = "v2"
+USE GRAPH ldbc_snb
+DROP QUERY ic_11
+SET syntax_version = "v2"
+USE GRAPH ldbc_snb
+DROP QUERY ic_11
+
+CREATE QUERY ic_11(VERTEX<Person> personId, STRING countryName, INT workFromYear) FOR GRAPH ldbc_snb {
+  TYPEDEF TUPLE<INT personId, STRING personFirstName, STRING personLastName, STRING organizationName> friendInfo;
+
+  DATETIME startTime = now();  // Start time for latency measurement
+
+  SetAccum<VERTEX<Person>> @@friendAll;
+  HeapAccum<friendInfo>(10, personId ASC, organizationName DESC) @@friendInfoTop;
+
+  // Step 1: Find all 1st and 2nd-degree friends of the input person
+  vPerson = { personId };
+  vFriend =
+    SELECT t
+    FROM vPerson:s-((Knows)*1..2)-Person:t
+    WHERE s != t
+    ACCUM @@friendAll += t;
+
+  // Step 2: Find companies located in the specified country where friends work
+  vCountry = { Country.* };
+  accFriend =
+    SELECT s
+    FROM vCountry:s
+        -(<Is_Located_In:e1)-Company:t1
+        -(<Work_At:e2)-Person:t2
+    WHERE s.name == countryName
+      AND @@friendAll.contains(t2)
+    
+    ACCUM @@friendInfoTop += friendInfo(t2.id, t2.first_name, t2.last_name, t1.name);
+
+  // Step 3: Capture end time for latency
+  DATETIME endTime = now();
+  INT totalQueryTime = datetime_diff(endTime, startTime);
+
+  // Step 4: Calculate throughput as the number of friends processed per second
+  INT totalFriendsProcessed = @@friendInfoTop.size();
+  FLOAT throughput = totalFriendsProcessed /( (totalQueryTime+1000 )/ 1000.0);  // Posts per second
+
+  // Output the results
+  PRINT @@friendInfoTop.size();
+  PRINT  totalQueryTime;
+  PRINT  throughput;
+  PRINT (vCountry.size()+vFriend.size()+vPerson.size()+totalFriendsProcessed)/(totalQueryTime+1);
+  PRINT accFriend.size();
+}
+
+// INSTALL QUERY ic_11
+// RUN QUERY ic_11(30786325583618, "Laos", 2010)
+SET query_timeout = 180000
+INTERPRET QUERY ic_11(30786325583618, "Laos", 2010)
+
