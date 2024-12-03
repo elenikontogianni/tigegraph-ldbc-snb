@@ -1,0 +1,25 @@
+//IC 8 query description is on page 39 https://ldbc.github.io/ldbc_snb_docs/ldbc-snb-specification.pdf
+SET syntax_version = "v2"
+USE GRAPH ldbc_snb
+CREATE OR REPLACE  QUERY ic_8(VERTEX<Person> personId) {
+  TYPEDEF tuple<INT personId, STRING personFirstName, STRING personLastName, 
+                DATETIME commentCreationDate, INT commentId, STRING commentContent> replier;
+  HeapAccum<replier>(20, commentCreationDate DESC, commentId ASC) @@result;
+DATETIME start=now();
+  S = { personId };
+  M = 
+    SELECT m
+    FROM S:s -(<Has_Creator)- (Comment|Post) -(<Reply_Of)- Comment:m -(Has_Creator>)- Person:p
+    PER(m,p)
+    ACCUM @@result += replier(p.id, p.first_name, p.last_name, m.creation_date, m.id, m.content);
+
+  PRINT @@result;
+  DATETIME end1=now();
+  int latency=datetime_diff(end1,start);
+  PRINT latency;
+  PRINT (@@result.size()+S.size()+M.size());
+  PRINT @@result.size();
+  
+}
+SET query_timeout = 180000
+INTERPRET QUERY ic_8(17592186053137)
